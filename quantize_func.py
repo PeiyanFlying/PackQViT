@@ -34,7 +34,6 @@ def log_shift(value_fp):
     return value_shift
 def get_quantized_range(num_bits):
     n = 2 ** (num_bits - 1)
-    return -n, n - 1
     return 0, 2 ** num_bits - 1
 
 
