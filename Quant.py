@@ -39,13 +39,13 @@ class FunQ(torch.autograd.Function):
         return grad_weight, grad_alpha, None, None, None
 
 
-def grad_scale(x, scale):
+def grad_scaling(x, scale):
     y = x
     y_grad = x * scale
     return y.detach() - y_grad.detach() + y_grad
 
 
-def round_pass(x):
+def round_sect(x):
     y = x.round()
     y_grad = x
     return y.detach() - y_grad.detach() + y_grad
@@ -85,15 +85,15 @@ class Conv2dQuantize(Quantize_Conv2d):
         g = 1.0 / math.sqrt(self.weight.numel() * Qp)
 
         # Method1: 31GB GPU memory (AlexNet w4a4 bs 2048) 17min/epoch
-        alpha = grad_scale(self.alpha, g)
+        alpha = grad_scaling(self.alpha, g)
         # print(alpha.shape)
         # print(self.weight.shape)
         alpha = alpha.unsqueeze(1).unsqueeze(2).unsqueeze(3)
-        w_q = round_pass((self.weight / alpha).clamp(Qn, Qp)) * alpha
+        w_q = round_sect((self.weight / alpha).clamp(Qn, Qp)) * alpha
 
         x = self.act(x)
         # w = w.clamp(Qn, Qp)
-        # q_w = round_pass(w)
+        # q_w = round_sect(w)
         # w_q = q_w * alpha
 
         # Method2: 25GB GPU memory (AlexNet w4a4 bs 2048) 32min/epoch
@@ -121,14 +121,14 @@ class LinearQuantize(Quantize_Linear):
         g = 1.0 / math.sqrt(self.weight.numel() * Qp)
 
         # Method1:
-        alpha = grad_scale(self.alpha, g)
+        alpha = grad_scaling(self.alpha, g)
         alpha = alpha.unsqueeze(1)
-        w_q = round_pass((self.weight / alpha).clamp(Qn, Qp)) * alpha
+        w_q = round_sect((self.weight / alpha).clamp(Qn, Qp)) * alpha
 
         x = self.act(x)
         # w = self.weight / alpha
         # w = w.clamp(Qn, Qp)
-        # q_w = round_pass(w)
+        # q_w = round_sect(w)
         # w_q = q_w * alpha
 
         # Method2:
@@ -173,9 +173,9 @@ class ActQuantize(Quantize_Activation):
 
         # Method1:
         zero_point = (self.zero_point.round() - self.zero_point).detach() + self.zero_point
-        alpha = grad_scale(self.alpha, g)
-        zero_point = grad_scale(zero_point, g)
-        # x = round_pass((x / alpha).clamp(Qn, Qp)) * alpha
+        alpha = grad_scaling(self.alpha, g)
+        zero_point = grad_scaling(zero_point, g)
+        # x = round_sect((x / alpha).clamp(Qn, Qp)) * alpha
         if len(x.shape)==2:
             alpha = alpha.unsqueeze(0)
             zero_point = zero_point.unsqueeze(0)
@@ -183,7 +183,7 @@ class ActQuantize(Quantize_Activation):
             alpha = alpha.unsqueeze(0).unsqueeze(2).unsqueeze(3)
             zero_point = zero_point.unsqueeze(0).unsqueeze(2).unsqueeze(3)
 
-        x = round_pass((x / alpha + zero_point).clamp(Qn, Qp))
+        x = round_sect((x / alpha + zero_point).clamp(Qn, Qp))
         x = (x - zero_point) * alpha
         self.alpha_q = nn.Parameter(alpha)
 
@@ -406,10 +406,10 @@ class LayerNormActQ(Quantize_Activation):
 
         # Method1:
         zero_point = (self.zero_point.round() - self.zero_point).detach() + self.zero_point
-        alpha = grad_scale(self.alpha, g)
-        zero_point = grad_scale(zero_point, g)
+        alpha = grad_scaling(self.alpha, g)
+        zero_point = grad_scaling(zero_point, g)
         # print(alpha.size()) 192
-        # x = round_pass((x / alpha).clamp(Qn, Qp)) * alpha
+        # x = round_sect((x / alpha).clamp(Qn, Qp)) * alpha
         if len(x.shape)==2:
             alpha = alpha.unsqueeze(0)
             zero_point = zero_point.unsqueeze(0)
@@ -418,7 +418,7 @@ class LayerNormActQ(Quantize_Activation):
             zero_point = zero_point.unsqueeze(0).unsqueeze(2).unsqueeze(3)
 
         #####
-        x = round_pass((x / alpha + zero_point).clamp(Qn, Qp))
+        x = round_sect((x / alpha + zero_point).clamp(Qn, Qp))
         x = (x - zero_point) * alpha
         self.alpha_q = nn.Parameter(alpha)
         # print(alpha.size()) 192
