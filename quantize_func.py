@@ -24,56 +24,35 @@ def get_mask(param, sparsity):
     threshold = bottomk.data[-1]  # This is the largest element from the group of elements that we prune away
     return torch.gt(torch.abs(param), threshold).type(param.type())
 
-class StopGrad(torch.autograd.Function):
+def clamp(input, min, max):
+    return torch.clamp(input, min, max)
 
-    @staticmethod
-    def forward(ctx, weight, stopGradientMask):
-        ctx.save_for_backward(stopGradientMask)
-        return weight
-
-    @staticmethod
-    def backward(ctx, grad_outputs):
-        stopGradientMask, = ctx.saved_tensors
-        grad_inputs = grad_outputs * stopGradientMask
-        return grad_inputs, None
 
 
 def log_shift(value_fp):
     value_shift = 2 ** (torch.log2(value_fp).ceil())
     return value_shift
-
-
-def clamp(input, min, max, inplace=False):
-    if inplace:
-        input.clamp_(min, max)
-        return input
-    return torch.clamp(input, min, max)
-
-
-def get_quantized_range(num_bits, signed=True):
-    if signed:
-        n = 2 ** (num_bits - 1)
-        return -n, n - 1
+def get_quantized_range(num_bits):
+    n = 2 ** (num_bits - 1)
+    return -n, n - 1
     return 0, 2 ** num_bits - 1
 
 
-def linear_quantize(input, scale_factor, inplace=False):
-    if inplace:
-        input.mul_(scale_factor).round_()
-        return input
+
+
+def linear_quantize(input, scale_factor):
     return torch.round(scale_factor * input)
 
-
-def linear_quantize_clamp(input, scale_factor, clamp_min, clamp_max, inplace=False):
-    output = linear_quantize(input, scale_factor, inplace)
-    return clamp(output, clamp_min, clamp_max, inplace)
-
-
-def linear_dequantize(input, scale_factor, inplace=False):
-    if inplace:
-        input.div_(scale_factor)
-        return input
+def linear_dequantize(input, scale_factor):
     return input / scale_factor
+
+
+def linear_quantize_clamp(input, scale_factor, clamp_min, clamp_max):
+    output = linear_quantize(input, scale_factor)
+    return clamp(output, clamp_min, clamp_max)
+
+
+
 
 
 def trunc(fp_data, nbits=8):
@@ -107,6 +86,19 @@ def get_default_kwargs_q(kwargs_q, layer_type):
         if k not in kwargs_q:
             kwargs_q[k] = v
     return kwargs_q
+
+class StopGrad(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, weight, stopGradientMask):
+        ctx.save_for_backward(stopGradientMask)
+        return weight
+
+    @staticmethod
+    def backward(ctx, grad_outputs):
+        Mask, = ctx.saved_tensors
+        grad_inputs = grad_outputs * Mask
+        return grad_inputs, None
 
 
 class Quantize_Conv2d(nn.Conv2d):
