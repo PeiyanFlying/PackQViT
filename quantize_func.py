@@ -9,33 +9,22 @@ import math
 from enum import Enum
 
 __all__ = ['Quantizemode',  'Quantize_Conv2d', 'Quantize_Linear', 'Quantize_Activation',
-           'truncation', 'get_sparsity_mask', 'FunStopGradient', 'round_pass', 'grad_scale']
+           'trunc', 'get_mask', 'StopGrad']
 
 
 class Quantizemode(Enum):
-    layer_wise = 1
     kernel_wise = 2
+    layer_wise = 1
 
 
-def grad_scale(x, scale):
-    y = x
-    y_grad = x * scale
-    return y.detach() - y_grad.detach() + y_grad
 
 
-def get_sparsity_mask(param, sparsity):
+def get_mask(param, sparsity):
     bottomk, _ = torch.topk(param.abs().view(-1), int(sparsity * param.numel()), largest=False, sorted=True)
     threshold = bottomk.data[-1]  # This is the largest element from the group of elements that we prune away
     return torch.gt(torch.abs(param), threshold).type(param.type())
 
-
-def round_pass(x):
-    y = x.round()
-    y_grad = x
-    return y.detach() - y_grad.detach() + y_grad
-
-
-class FunStopGradient(torch.autograd.Function):
+class StopGrad(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, weight, stopGradientMask):
@@ -87,7 +76,7 @@ def linear_dequantize(input, scale_factor, inplace=False):
     return input / scale_factor
 
 
-def truncation(fp_data, nbits=8):
+def trunc(fp_data, nbits=8):
     il = torch.log2(torch.max(fp_data.max(), fp_data.min().abs())) + 1
     il = math.ceil(il - 1e-5)
     qcode = nbits - il
