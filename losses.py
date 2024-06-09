@@ -7,18 +7,22 @@ import torch
 from torch.nn import functional as F
 
 
-class DistillationLoss_bi(torch.nn.Module):
-    def __init__(self, base_criterion: torch.nn.Module,
+class DistillationLoss(torch.nn.Module):
+    """
+    This module wraps a standard criterion and adds an extra knowledge distillation loss by
+    taking a teacher model prediction and using it as additional supervision.
+    """
+    def __init__(self, base_criterion: torch.nn.Module, teacher_model: torch.nn.Module,
                  distillation_type: str, alpha: float, tau: float):
         super().__init__()
         self.base_criterion = base_criterion
-        # self.teacher_model = teacher_model
+        self.teacher_model = teacher_model
         assert distillation_type in ['none', 'soft', 'hard']
         self.distillation_type = distillation_type
         self.alpha = alpha
         self.tau = tau
 
-    def forward(self, inputs, outputs, labels, teacher_outputs):
+    def forward(self, inputs, outputs, labels):
         """
         Args:
             inputs: The original inputs that are feed to the teacher model
@@ -35,6 +39,13 @@ class DistillationLoss_bi(torch.nn.Module):
         if self.distillation_type == 'none':
             return base_loss
 
+        if outputs_kd is None:
+            raise ValueError("When knowledge distillation is enabled, the model is "
+                             "expected to return a Tuple[Tensor, Tensor] with the output of the "
+                             "class_token and the dist_token")
+        # don't backprop throught the teacher
+        with torch.no_grad():
+            teacher_outputs = self.teacher_model(inputs)
 
         if self.distillation_type == 'soft':
             T = self.tau

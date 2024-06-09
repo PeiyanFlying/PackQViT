@@ -5,10 +5,10 @@ from torch.autograd import Function, Variable
 import math
 import torch.nn as nn
 from torch.nn.parameter import Parameter
-from quantize_func import Quantize_Conv2d, Quantizemode, Quantize_Linear, Quantize_Activation
+from _quan_func import QuantizeConv2d, Quantizemodels, QuantizeLinear, QuantizeAct
 
 
-__all__ = ['Conv2dQuantize', 'LinearQuantize', 'ActQuantize', 'QIntSoftmax', 'LayerNormActQ']
+__all__ = ['Conv2dQuant', 'LinearQuant', 'ActQ', 'QIntSoftmax', 'LayerNormActQ']
 
 
 class FunQ(torch.autograd.Function):
@@ -39,26 +39,26 @@ class FunQ(torch.autograd.Function):
         return grad_weight, grad_alpha, None, None, None
 
 
-def grad_scaling(x, scale):
+def grad_scale(x, scale):
     y = x
     y_grad = x * scale
     return y.detach() - y_grad.detach() + y_grad
 
 
-def round_sect(x):
+def round_fun(x):
     y = x.round()
     y_grad = x
     return y.detach() - y_grad.detach() + y_grad
 
 
-class Conv2dQuantize(Quantize_Conv2d):
+class Conv2dQuant(QuantizeConv2d):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
-                 padding=0, dilation=1, groups=1, bias=True, nbits_w=8, mode=Quantizemode.kernel_wise, **kwargs):
-        super(Conv2dQuantize, self).__init__(
+                 padding=0, dilation=1, groups=1, bias=True, nbits_w=8, mode=Quantizemodels.kernel_wise, **kwargs):
+        super(Conv2dQuant, self).__init__(
             in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
             stride=stride, padding=padding, dilation=dilation, groups=groups, bias=bias,
             nbits=nbits_w, mode=mode)
-        self.act = ActQuantize(in_features=in_channels, nbits_a=nbits_w)
+        self.act = ActQ(in_features=in_channels, nbits_a=nbits_w)
 
     def forward(self, x):
         if self.alpha is None:
@@ -72,28 +72,19 @@ class Conv2dQuantize(Quantize_Conv2d):
             self.alpha.data.copy_(2 * self.weight.abs().mean() / math.sqrt(Qp))
             # self.alpha.data.copy_(self.weight.abs().max() * 2)
             self.init_state.fill_(1)
-        """  
-        Implementation according to paper. 
-        Feels wrong ...
-        When we initialize the alpha as a big number (e.g., self.weight.abs().max() * 2), 
-        the clamp function can be skipped.
-        Then we get w_q = w / alpha * alpha = w, and $\frac{\partial w_q}{\partial \alpha} = 0$
-        As a result, I don't think the pseudo-code in the paper echoes the formula.
-       
-        Please see jupyter/STE_LSQ.ipynb fo detailed comparison.
-        """
+
         g = 1.0 / math.sqrt(self.weight.numel() * Qp)
 
         # Method1: 31GB GPU memory (AlexNet w4a4 bs 2048) 17min/epoch
-        alpha = grad_scaling(self.alpha, g)
+        alpha = grad_scale(self.alpha, g)
         # print(alpha.shape)
         # print(self.weight.shape)
         alpha = alpha.unsqueeze(1).unsqueeze(2).unsqueeze(3)
-        w_q = round_sect((self.weight / alpha).clamp(Qn, Qp)) * alpha
+        w_q = round_fun((self.weight / alpha).clamp(Qn, Qp)) * alpha
 
         x = self.act(x)
         # w = w.clamp(Qn, Qp)
-        # q_w = round_sect(w)
+        # q_w = round_fun(w)
         # w_q = q_w * alpha
 
         # Method2: 25GB GPU memory (AlexNet w4a4 bs 2048) 32min/epoch
@@ -103,11 +94,11 @@ class Conv2dQuantize(Quantize_Conv2d):
                         self.padding, self.dilation, self.groups)
 
 
-class LinearQuantize(Quantize_Linear):
+class LinearQuant(QuantizeLinear):
     def __init__(self, in_features, out_features, bias=True, nbits_w=4, **kwargs):
-        super(LinearQuantize, self).__init__(in_features=in_features,
-                                        out_features=out_features, bias=bias, nbits=nbits_w, mode=Quantizemode.kernel_wise)
-        self.act = ActQuantize(in_features=in_features, nbits_a=nbits_w)
+        super(LinearQuant, self).__init__(in_features=in_features,
+                                        out_features=out_features, bias=bias, nbits=nbits_w, mode=Quantizemodels.kernel_wise)
+        self.act = ActQ(in_features=in_features, nbits_a=nbits_w)
 
     def forward(self, x):
         if self.alpha is None:
@@ -121,14 +112,14 @@ class LinearQuantize(Quantize_Linear):
         g = 1.0 / math.sqrt(self.weight.numel() * Qp)
 
         # Method1:
-        alpha = grad_scaling(self.alpha, g)
+        alpha = grad_scale(self.alpha, g)
         alpha = alpha.unsqueeze(1)
-        w_q = round_sect((self.weight / alpha).clamp(Qn, Qp)) * alpha
+        w_q = round_fun((self.weight / alpha).clamp(Qn, Qp)) * alpha
 
         x = self.act(x)
         # w = self.weight / alpha
         # w = w.clamp(Qn, Qp)
-        # q_w = round_sect(w)
+        # q_w = round_fun(w)
         # w_q = q_w * alpha
 
         # Method2:
@@ -136,9 +127,9 @@ class LinearQuantize(Quantize_Linear):
         return F.linear(x, w_q, self.bias)
 
 
-class ActQuantize(Quantize_Activation):
-    def __init__(self, in_features, nbits_a=4, mode=Quantizemode.kernel_wise, **kwargs):
-        super(ActQuantize, self).__init__(in_features=in_features, nbits=nbits_a, mode=mode)
+class ActQ(QuantizeAct):
+    def __init__(self, in_features, nbits_a=4, mode=Quantizemodels.kernel_wise, **kwargs):
+        super(ActQ, self).__init__(in_features=in_features, nbits=nbits_a, mode=mode)
         self.alpha_q = self.alpha
         # print(self.alpha.shape, self.zero_point.shape)
     def forward(self, x):
@@ -160,7 +151,6 @@ class ActQuantize(Quantize_Activation):
             self.alpha.data.copy_(2 * x.abs().mean() / math.sqrt(Qp))
             self.zero_point.data.copy_(self.zero_point.data * 0.9 + 0.1 * (torch.min(x.detach()) - self.alpha.data * Qn))
             self.init_state.fill_(1)
-        # print(self.alpha.size()) channel_dim
 
         if self.signed == 1:
             Qn = -2 ** (self.nbits - 1)
@@ -173,9 +163,9 @@ class ActQuantize(Quantize_Activation):
 
         # Method1:
         zero_point = (self.zero_point.round() - self.zero_point).detach() + self.zero_point
-        alpha = grad_scaling(self.alpha, g)
-        zero_point = grad_scaling(zero_point, g)
-        # x = round_sect((x / alpha).clamp(Qn, Qp)) * alpha
+        alpha = grad_scale(self.alpha, g)
+        zero_point = grad_scale(zero_point, g)
+        # x = round_fun((x / alpha).clamp(Qn, Qp)) * alpha
         if len(x.shape)==2:
             alpha = alpha.unsqueeze(0)
             zero_point = zero_point.unsqueeze(0)
@@ -183,7 +173,7 @@ class ActQuantize(Quantize_Activation):
             alpha = alpha.unsqueeze(0).unsqueeze(2).unsqueeze(3)
             zero_point = zero_point.unsqueeze(0).unsqueeze(2).unsqueeze(3)
 
-        x = round_sect((x / alpha + zero_point).clamp(Qn, Qp))
+        x = round_fun((x / alpha + zero_point).clamp(Qn, Qp))
         x = (x - zero_point) * alpha
         self.alpha_q = nn.Parameter(alpha)
 
@@ -257,6 +247,17 @@ class QIntSoftmax(nn.Module):
         exp_int_sum = exp_int.sum(dim=-1, keepdim=True)
         return exp_int, exp_int_sum
 
+    def Softmax_p2(self, attn):
+        max_att = torch.max(attn, dim=-1, keepdim=True)[0]
+        attn = attn - max_att
+        # attn = attn.exp_()
+        # return attn / attn.sum(dim=-1, keepdim=True)
+
+        # for stable training
+        attn = 2**(attn.to(torch.float32))
+        attn = attn / attn.sum(dim=-1, keepdim=True)
+        return attn.type_as(max_att)
+
     def forward(self, x, scale):
         if scale is not None:
             exp_int, exp_int_sum = self.int_softmax(x, scale)
@@ -268,7 +269,8 @@ class QIntSoftmax(nn.Module):
             deq_softmax[mask] = 0
             return deq_softmax
         else:
-            x = x.softmax(dim=-1)
+            # x = x.softmax(dim=-1)
+            x = self.Softmax_p2(x)
             deq_softmax = Log2_Quantize.apply(x, self.bits, 'po2')
             # deq_softmax[mask] = 0
             # if self.calibrate:
@@ -341,8 +343,8 @@ class Log2_Quantize(Function):
     def backward(ctx, grad_output):
         return grad_output, None, None
 
-class LayerNormActQ(Quantize_Activation):
-    def __init__(self, in_features, nbits_a=4, mode=Quantizemode.kernel_wise, **kwargs):
+class LayerNormActQ(QuantizeAct):
+    def __init__(self, in_features, nbits_a=4, mode=Quantizemodels.kernel_wise, **kwargs):
         super(LayerNormActQ, self).__init__(in_features=in_features, nbits=nbits_a, mode=mode)
         self.alpha_q = self.alpha
         self.eps = torch.finfo(torch.float32).eps
@@ -406,10 +408,10 @@ class LayerNormActQ(Quantize_Activation):
 
         # Method1:
         zero_point = (self.zero_point.round() - self.zero_point).detach() + self.zero_point
-        alpha = grad_scaling(self.alpha, g)
-        zero_point = grad_scaling(zero_point, g)
+        alpha = grad_scale(self.alpha, g)
+        zero_point = grad_scale(zero_point, g)
         # print(alpha.size()) 192
-        # x = round_sect((x / alpha).clamp(Qn, Qp)) * alpha
+        # x = round_fun((x / alpha).clamp(Qn, Qp)) * alpha
         if len(x.shape)==2:
             alpha = alpha.unsqueeze(0)
             zero_point = zero_point.unsqueeze(0)
@@ -418,7 +420,7 @@ class LayerNormActQ(Quantize_Activation):
             zero_point = zero_point.unsqueeze(0).unsqueeze(2).unsqueeze(3)
 
         #####
-        x = round_sect((x / alpha + zero_point).clamp(Qn, Qp))
+        x = round_fun((x / alpha + zero_point).clamp(Qn, Qp))
         x = (x - zero_point) * alpha
         self.alpha_q = nn.Parameter(alpha)
         # print(alpha.size()) 192

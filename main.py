@@ -8,6 +8,8 @@ import torch
 import torch.backends.cudnn as cudnn
 import json
 
+from pathlib import Path
+
 from timm.data import Mixup
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
@@ -15,22 +17,22 @@ from timm.scheduler import create_scheduler
 from timm.optim import create_optimizer
 from timm.utils import NativeScaler, get_state_dict, ModelEma
 
-from pathlib import Path
-
 from datasets import build_dataset
 from engine import train_one_epoch, evaluate
 from losses import DistillationLoss
 from samplers import RASampler
-import models
+# import models
 import quant_vit
 import utils
 
+# import os
+# os.environ['SLURM_PROCID']
 
 
 def get_args_parser():
-    parser = argparse.ArgumentParser('PackQViT training and evaluation script', add_help=False)
-    parser.add_argument('--batch-size', default=16, type=int)
-    parser.add_argument('--epochs', default=100, type=int)
+    parser = argparse.ArgumentParser('DeiT training and evaluation script', add_help=False)
+    parser.add_argument('--batch-size', default=64, type=int)
+    parser.add_argument('--epochs', default=300, type=int)
 
     # Model parameters
     parser.add_argument('--model', default='deit_base_patch16_224', type=str, metavar='MODEL',
@@ -453,7 +455,7 @@ def main(args):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser('PackQViT training and evaluation script', parents=[get_args_parser()])
+    parser = argparse.ArgumentParser('DeiT training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)

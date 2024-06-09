@@ -19,7 +19,7 @@ from timm.models.registry import register_model
 
 import numpy as np
 from Quant import *
-from quantize_func import *
+from _quan_func import *
 
 
 _logger = logging.getLogger(__name__)
@@ -124,16 +124,16 @@ default_cfgs = {
 class Q_Mlp(nn.Module):
     """ MLP as used in Vision Transformer, MLP-Mixer and related networks
     """
-    def __init__(self, nbits, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
+    def __init__(self, nbits, in_features, hidden_features=None, out_features=None, act_layer=nn.Hardswish, drop=0.):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
         drop_probs = to_2tuple(drop)
 
-        self.fc1 = LinearQ(in_features, hidden_features, nbits_w=nbits, mode=Qmodes.kernel_wise)
+        self.fc1 = LinearQuant(in_features, hidden_features, nbits_w=nbits, mode=Quantizemodels.kernel_wise)
         self.act = act_layer()
         self.drop1 = nn.Dropout(drop_probs[0])
-        self.fc2 = LinearQ(hidden_features, out_features, nbits_w=nbits, mode=Qmodes.kernel_wise)
+        self.fc2 = LinearQuant(hidden_features, out_features, nbits_w=nbits, mode=Quantizemodels.kernel_wise)
         self.drop2 = nn.Dropout(drop_probs[1])
 
     def forward(self, x):
@@ -165,10 +165,10 @@ class Q_Attention(nn.Module):
 
 
         if self.quantize_attn:
-            self.qkv = LinearQ(dim, dim * 3, bias=qkv_bias, nbits_w=nbits, mode=Qmodes.kernel_wise)
+            self.qkv = LinearQuant(dim, dim * 3, bias=qkv_bias, nbits_w=nbits, mode=Quantizemodels.kernel_wise)
             self.attn_drop = nn.Dropout(attn_drop)
-            self.soft_max = QIntSoftmax(8)
-            self.proj = LinearQ(dim, dim, nbits_w=nbits, mode=Qmodes.kernel_wise)
+            self.soft_max = QIntSoftmax(4)
+            self.proj = LinearQuant(dim, dim, nbits_w=nbits, mode=Quantizemodels.kernel_wise)
             self.q_act = ActQ(nbits_a=nbits, in_features=self.num_heads)
             self.k_act = ActQ(nbits_a=nbits, in_features=self.num_heads)
             self.v_act = ActQ(nbits_a=nbits, in_features=self.num_heads)
@@ -216,7 +216,7 @@ class Q_Attention(nn.Module):
 class Q_Block(nn.Module):
 
     def __init__(self, nbits, dim, num_heads, mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0.,
-                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm):
+                 drop_path=0., act_layer=nn.Hardswish, norm_layer=nn.LayerNorm):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.attn = Q_Attention(nbits, dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop)
@@ -225,14 +225,10 @@ class Q_Block(nn.Module):
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Q_Mlp(nbits=nbits, in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
-        self.quant_norm1 = LayerNormActQ(in_features=dim)
-        self.quant_norm2 = LayerNormActQ(in_features=dim)
 
-    def forward(self, x, i):
-        if i !=0:
-            x = self.quant_norm1(x)
+    def forward(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
-        x = x + self.drop_path(self.mlp(self.norm2(self.quant_norm2(x))))
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
 
 class Q_PatchEmbed(nn.Module):
@@ -247,7 +243,7 @@ class Q_PatchEmbed(nn.Module):
         self.patch_size = patch_size
         self.num_patches = num_patches
 
-        self.proj = Conv2dQ(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
+        self.proj = Conv2dQuant(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
         # nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
 
     def forward(self, x):
@@ -296,7 +292,7 @@ class lowbit_VisionTransformer(nn.Module):
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
         self.num_tokens = 2 if distilled else 1
         norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
-        act_layer = act_layer or nn.GELU
+        act_layer = act_layer or nn.Hardswish
 
         self.patch_embed = embed_layer(
             nbits=nbits, img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
@@ -326,12 +322,12 @@ class lowbit_VisionTransformer(nn.Module):
             self.pre_logits = nn.Identity()
 
         # Classifier head(s)
-        self.head = LinearQ(self.num_features, num_classes, nbits_w=8) if num_classes > 0 else nn.Identity()
+        self.head = LinearQuant(self.num_features, num_classes, nbits_w=8) if num_classes > 0 else nn.Identity()
         # nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
         self.head_dist = None
         if distilled:
-            self.head_dist = LinearQ(self.embed_dim, self.num_classes, nbits_w=8) if num_classes > 0 else nn.Identity()
-            # self.head = LinearQ(self.embed_dim, self.num_classes, nbits_w=8) if num_classes > 0 else nn.Identity()
+            self.head_dist = LinearQuant(self.embed_dim, self.num_classes, nbits_w=8) if num_classes > 0 else nn.Identity()
+            # self.head = LinearQuant(self.embed_dim, self.num_classes, nbits_w=8) if num_classes > 0 else nn.Identity()
             # nn.Linear(self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
 
         self.init_weights(weight_init)
@@ -381,8 +377,7 @@ class lowbit_VisionTransformer(nn.Module):
         else:
             x = torch.cat((cls_token, self.dist_token.expand(x.shape[0], -1, -1), x), dim=1)
         x = self.pos_drop(x + self.pos_embed)
-        for i, blk in enumerate(self.blocks):
-            x = blk(x, i)
+        x = self.blocks(x)
         x = self.norm(x)
         if self.dist_token is None:
             return self.pre_logits(x[:, 0])
@@ -518,10 +513,9 @@ def fourbits_deit_small_patch16_224(pretrained=False, **kwargs):
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     model.default_cfg = _cfg()
     if pretrained:
-        torch.hub.load_state_dict_from_url(
-            url='https://dl.fbaipublicfiles.com/deit/deit_small_patch16_224-cd65a155.pth',
-            map_location="cpu", check_hash=True
-        )
+        checkpoint = checkpoint = torch.load('./pretrained/best_checkpoint_3bit.pth',map_location="cpu")
+        model.load_state_dict(checkpoint["model"], strict=False)
+        print('that ok....')
     return model
 
 @register_model
