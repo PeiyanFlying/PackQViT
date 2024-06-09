@@ -7,3 +7,6 @@ Python 3.8
 Pytorch 1.7.1
 Torchvision 0.8.2
 timm 0.4.12
+
+## Checked Models
+https://drive.google.com/drive/folders/19c7s_AglQGzVWfvzySpCdBKWqqPabxmN?usp=drive_link
